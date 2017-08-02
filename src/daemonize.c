@@ -28,31 +28,53 @@ extern int syslog_flag;
 extern IPWD_S_CONFIG config;
 
 
-//! Daemonizes the proccess
+//! Daemonizes the proccess or run in foreground by daemon_flag.
 /*!
  * \return IPWD_RV_SUCCESS if successful IPWD_RV_ERROR otherwise
  */
-int ipwd_daemonize (void)
+int ipwd_daemonize (int daemon_flag)
 {
 
 	/* Check if ipwatchd is running - only one daemon instance is allowed */
-	if (ipwd_check_pidfile () != IPWD_RV_SUCCESS) 
+	if (ipwd_check_pidfile () != IPWD_RV_SUCCESS)
 	{
 		return (IPWD_RV_ERROR);
 	}
 
-	/* Fork child process */
-	pid_t pid = fork ();
-	if (pid < 0)
+	/* If parent of this process is init we are already in daemon mode */
+	if (getppid () == 1)
 	{
-		ipwd_message (IPWD_MSG_TYPE_ERROR, "Unable to fork a child process");
-		return (IPWD_RV_ERROR);
+		ipwd_message (IPWD_MSG_TYPE_INFO, "Already running as daemon");
+		return (IPWD_RV_SUCCESS);
 	}
 
-	/* Fork was successful we can exit parent */
-	if (pid > 0)
-	{
-		exit (IPWD_RV_SUCCESS);
+	/* Fork child process if run in daemon mode*/
+	if (daemon_flag == 1){
+		pid_t pid = fork ();
+		if (pid < 0)
+		{
+			ipwd_message (IPWD_MSG_TYPE_ERROR, "Unable to fork a child process");
+			return (IPWD_RV_ERROR);
+		}
+
+		/* Fork was successful we can exit parent */
+		if (pid > 0)
+		{
+			exit (IPWD_RV_SUCCESS);
+		}
+	} else {
+		// Otherwise, we ONLY create the pid file, set the log
+		// and return to the main.
+
+		/* Create PID file */
+		if (ipwd_create_pidfile () != IPWD_RV_SUCCESS)
+		{
+			return (IPWD_RV_ERROR);
+		}
+
+		/* Configure the logging, without default syslog=1 as it's in foreground mode */
+		openlog ("ipwatchd", LOG_PID | LOG_CONS | LOG_NDELAY, config.facility);
+		return (IPWD_RV_SUCCESS);
 	}
 
 	/* All messages must be sysloged since now */
@@ -224,4 +246,3 @@ int ipwd_check_pidfile (void)
 	return (IPWD_RV_SUCCESS);
 
 }
-
