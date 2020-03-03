@@ -54,7 +54,6 @@ void ipwd_analyse (u_char * args, const struct pcap_pkthdr *header, const u_char
 
 	/* Following variable was added because gcc 4.4.1 displayed warning: dereferencing type-punned pointer will break strict-aliasing rules */
 	struct in_addr * p_arp_spa = (struct in_addr *) &arpaddr->arp_spa;
-
 	if ((p_rcv_sip = inet_ntoa (*(p_arp_spa))) == NULL)
 	{
 		ipwd_message (IPWD_MSG_TYPE_ERROR, "Could not get source IP address from packet");
@@ -108,66 +107,43 @@ void ipwd_analyse (u_char * args, const struct pcap_pkthdr *header, const u_char
 
 	ipwd_message (IPWD_MSG_TYPE_DEBUG, "Received ARP packet: S:%s-%s D:%s-%s", rcv_sip, rcv_smac, rcv_dip, rcv_dmac);
 
-	/* Update devices structure with actual IP and MAC addresses of interfaces */
-	for (i = 0; i < devices.devnum; i++)
+	/* Get current system time */
+	if (gettimeofday (&current_time, NULL) != 0)
 	{
-		if (ipwd_devinfo (devices.dev[i].device, devices.dev[i].ip, devices.dev[i].mac) == IPWD_RV_ERROR)
-		{
-			devices.dev[i].state = IPWD_DEVICE_STATE_UNUSABLE;
-			continue;
-		}
-		else
-		{
-			devices.dev[i].state = IPWD_DEVICE_STATE_USABLE;
-		}
-
-		/* Ignore packets coming from local interfaces */
-		if (strcasecmp (rcv_smac, devices.dev[i].mac) == 0)
-		{
-			if (strcasecmp (rcv_sip, devices.dev[i].ip) == 0)
-			{
-				ipwd_message (IPWD_MSG_TYPE_DEBUG, "ARP packet ignored because it comes from local interface.");
-			}
-			else
-			{
-				/* Happens when there is more than one interface connected to the same subnet */
-				ipwd_message (IPWD_MSG_TYPE_DEBUG, "ARP packet ignored because it comes from local machine.");
-			}
-
-			return;
-		}
+		ipwd_message (IPWD_MSG_TYPE_ERROR, "Unable to get current time");
 	}
 
+	for (i = 0; i < devices.devnum; i++)
+	{
+		/* Ignore packets coming from local interfaces */
+		if (strcasecmp(rcv_smac, devices.dev[i].mac) == 0)
+			return;
+	}
+	
 	/* Search through devices structure */
 	for (i = 0; i < devices.devnum; i++)
 	{
-		/* Skip devices that are currently unusable */
-		if (devices.dev[i].state == IPWD_DEVICE_STATE_UNUSABLE)
+		if (devices.dev[i].mode == IPWD_PROTECTION_MODE_IGNORE)
 			continue;
 
-		if (testing_flag == 0)
+		const char *ip = NULL;
+		for (const IPWD_S_ADDR *pAddr = devices.dev[i].addresses; pAddr != NULL; pAddr = pAddr->next)
 		{
-			/* Check if received packet causes conflict with IP address of this interface */
-			if (!((strcasecmp (rcv_sip, devices.dev[i].ip) == 0) && (strcasecmp (rcv_smac, devices.dev[i].mac) != 0)))
+			if (strcasecmp(rcv_sip, pAddr->ip) == 0)
 			{
-				ipwd_message (IPWD_MSG_TYPE_DEBUG, "Packet does not conflict with: %s %s-%s", devices.dev[i].device, devices.dev[i].ip, devices.dev[i].mac);
-				continue;
+				ip = pAddr->ip;
+				break;
 			}
 		}
-
-		/* Get current system time */
-		if (gettimeofday (&current_time, NULL) != 0)
-		{
-			ipwd_message (IPWD_MSG_TYPE_ERROR, "Unable to get current time");
-			break;
-		}
+		if (ip == NULL)
+			continue;
 
 		difference = ((current_time.tv_sec + (current_time.tv_usec / 1000000.0)) - (devices.dev[i].time.tv_sec + (devices.dev[i].time.tv_usec / 1000000.0)));
 
 		/* Check if current time is within the defend interval */
 		if (difference < config.defend_interval)
 		{
-			ipwd_message (IPWD_MSG_TYPE_ALERT, "MAC address %s causes IP conflict with address %s set on interface %s - no action taken because this happened within the defend interval", rcv_smac, devices.dev[i].ip, devices.dev[i].device);
+			ipwd_message (IPWD_MSG_TYPE_ALERT, "MAC address %s causes IP conflict with address %s set on interface %s - no action taken because this happened within the defend interval", rcv_smac, ip, devices.dev[i].device);
 			break;
 		}
 
@@ -178,23 +154,23 @@ void ipwd_analyse (u_char * args, const struct pcap_pkthdr *header, const u_char
 		/* Handle IP conflict */
 		if (devices.dev[i].mode == IPWD_PROTECTION_MODE_ACTIVE)
 		{
-			ipwd_message (IPWD_MSG_TYPE_ALERT, "MAC address %s causes IP conflict with address %s set on interface %s - active mode - reply sent", rcv_smac, devices.dev[i].ip, devices.dev[i].device);
+			ipwd_message (IPWD_MSG_TYPE_ALERT, "MAC address %s causes IP conflict with address %s set on interface %s - active mode - reply sent", rcv_smac, rcv_sip, devices.dev[i].device);
 
 			/* Send reply to conflicting system */
-			ipwd_genarp (devices.dev[i].device, devices.dev[i].ip, devices.dev[i].mac, rcv_sip, rcv_smac, ARPOP_REPLY);
+			ipwd_genarp (devices.dev[i].device, rcv_sip, devices.dev[i].mac, rcv_sip, rcv_smac, ARPOP_REPLY);
 
 			/* Send GARP request to update cache of our neighbours */
-			ipwd_genarp (devices.dev[i].device, devices.dev[i].ip, devices.dev[i].mac, devices.dev[i].ip, "ff:ff:ff:ff:ff:ff", ARPOP_REQUEST);
+			ipwd_genarp (devices.dev[i].device, rcv_sip, devices.dev[i].mac, rcv_sip, "ff:ff:ff:ff:ff:ff", ARPOP_REQUEST);
 		}
 		else
 		{
-			ipwd_message (IPWD_MSG_TYPE_ALERT, "MAC address %s causes IP conflict with address %s set on interface %s - passive mode - reply not sent", rcv_smac, devices.dev[i].ip, devices.dev[i].device);
+			ipwd_message (IPWD_MSG_TYPE_ALERT, "MAC address %s causes IP conflict with address %s set on interface %s - passive mode - reply not sent", rcv_smac, rcv_sip, devices.dev[i].device);
 		}
 
 		if (config.script != NULL)
 		{
 			/* Run user-defined script in form: script "dev" "ip" "mac" */
-			command_len = strlen (config.script) + 2 + strlen (devices.dev[i].device) + 3 + strlen (devices.dev[i].ip) + 3 + strlen (rcv_smac) + 2;
+			command_len = strlen (config.script) + 2 + strlen (devices.dev[i].device) + 3 + strlen (rcv_sip) + 3 + strlen (rcv_smac) + 2;
 
 			if ((command = (char *) malloc (command_len * sizeof (char))) == NULL)
 			{
@@ -202,7 +178,7 @@ void ipwd_analyse (u_char * args, const struct pcap_pkthdr *header, const u_char
 				break;
  			}
 
-			snprintf (command, command_len, "%s \"%s\" \"%s\" \"%s\"", config.script, devices.dev[i].device, devices.dev[i].ip, rcv_smac);
+			snprintf (command, command_len, "%s \"%s\" \"%s\" \"%s\"", config.script, devices.dev[i].device, rcv_sip, rcv_smac);
 
 			ipwd_message (IPWD_MSG_TYPE_DEBUG, "Running user-defined script: %s", command);
 
@@ -224,7 +200,5 @@ void ipwd_analyse (u_char * args, const struct pcap_pkthdr *header, const u_char
 		{
 			break;
 		}
-
 	}
 }
-

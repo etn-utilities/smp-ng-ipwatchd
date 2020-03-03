@@ -87,19 +87,11 @@ IPWD_MSG_TYPE;
 //! Protection modes
 typedef enum
 { 
+	IPWD_PROTECTION_MODE_IGNORE = 0,
 	IPWD_PROTECTION_MODE_ACTIVE = 1,		/**< Indicates active protection mode */
 	IPWD_PROTECTION_MODE_PASSIVE = 2,		/**< Indicates passive protection mode */
 }
 IPWD_PROTECTION_MODE;
-
-//! Configuration modes
-typedef enum
-{ 
-	IPWD_CONFIGURATION_MODE_AUTOMATIC = 1,	/**< Indicates automatic configuration mode */
-	IPWD_CONFIGURATION_MODE_MANUAL = 2		/**< Indicates manual configuration mode */
-}
-IPWD_CONFIGURATION_MODE;
-
 
 /* Configuration */
 
@@ -109,7 +101,6 @@ typedef struct
 	int facility;					/**< Syslog facility */
 	char * script;					/**< Absolute path to user-defined script */
 	int defend_interval;			/**< Minimum interval between defensive ARPs */
-	IPWD_CONFIGURATION_MODE mode;	/**< Configuration mode for network devices */
 }
 IPWD_S_CONFIG;
 
@@ -123,22 +114,21 @@ IPWD_S_CONFIG;
 #define IPWD_MAX_DEVICE_ADDRESS_LEN 20
 
 //! State of the device device indicating if it should be used in conflict detection process
-typedef enum
+typedef struct IPWD_S_ADDR
 {
-	IPWD_DEVICE_STATE_USABLE = 1,		/**< Device should be used in conflict detection process */
-	IPWD_DEVICE_STATE_UNUSABLE = 2		/**< Device should not be used in conflict detection process */
+	char *ip;		/**< IP address of device */
+	struct IPWD_S_ADDR *next;
 }
-IPWD_DEVICE_STATE;
+IPWD_S_ADDR;
 
 //! Structure that holds information about ONE network interface
 typedef struct
 {
 	char device[IPWD_MAX_DEVICE_NAME_LEN];		/**< Device name */
-	IPWD_DEVICE_STATE state;					/**< Indicates if device should be used in conflict detection process */
-	char ip[IPWD_MAX_DEVICE_ADDRESS_LEN];		/**< IP address of device */
 	char mac[IPWD_MAX_DEVICE_ADDRESS_LEN];		/**< MAC address of device */
 	IPWD_PROTECTION_MODE mode;					/**< IPwatch mode on interface */
 	struct timeval time;						/**< Time information indicating when the last conflict was detected */
+	IPWD_S_ADDR *addresses;
 }
 IPWD_S_DEV;
 
@@ -205,4 +195,3 @@ int ipwd_set_signal_handler (void);
 void ipwd_signal_handler (int signal);
 
 // \endcond Doxygen ignore block end
-

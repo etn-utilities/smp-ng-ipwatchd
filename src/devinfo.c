@@ -20,96 +20,126 @@
  * \brief Contains logic used for acquiring information about network devices
  */
 
-
 #include "ipwatchd.h"
-
 
 extern IPWD_S_CONFIG config;
 extern IPWD_S_DEVS devices;
 
 
-//! Gets the IP and MAC addresses of specified device in human readable form
-/*!
- * Based on examples from: http://english.geekpage.jp/programming/linux-network/
- * \param p_dev Name of the device (i.e. eth0)
- * \param p_ip Pointer to string where the IP address should be stored
- * \param p_mac Pointer to string where the MAC address should be stored
- * \return IPWD_RV_SUCCESS if successful IPWD_RV_ERROR otherwise
- */
-int ipwd_devinfo (const char *p_dev, char *p_ip, char *p_mac)
+const IPWD_S_DEV* ipwd_fill_device(const pcap_if_t *pDev, IPWD_PROTECTION_MODE mode)
 {
-
-	/* Create UDP socket */
+	const IPWD_S_DEV *pResult = NULL;
+	char errbuf[PCAP_ERRBUF_SIZE] = {0};
 	int sock = -1;
-	sock = socket (AF_INET, SOCK_DGRAM, 0);
+	pcap_t *h_pcap = NULL;
+	struct ifreq ifr;
+
+	if (pDev->addresses == NULL)
+	{
+		ipwd_message(IPWD_MSG_TYPE_DEBUG, "Device \"%s\" has no address", pDev->name);
+		goto clean_up;
+	}
+
+	/* Check if device is valid ethernet device */
+	h_pcap = pcap_open_live(pDev->name, BUFSIZ, 0, 0, errbuf);
+	if (h_pcap == NULL)
+	{
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "IPwatchD is unable to work with device \"%s\"", pDev->name);
+		goto clean_up;
+	}
+
+	if (pcap_datalink(h_pcap) != DLT_EN10MB)
+	{
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "Device \"%s\" is not valid ethernet device", pDev->name);
+		goto clean_up;
+	}
+	pcap_close(h_pcap);
+	h_pcap = NULL;
+
+	
+
+	sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (sock < 0)
 	{
-		ipwd_message (IPWD_MSG_TYPE_ERROR, "Could not open socket");
-		return (IPWD_RV_ERROR);
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "Could not open socket");
+		goto clean_up;
 	}
 
-	struct ifreq ifr;
-	memset (&ifr, 0, sizeof(struct ifreq));
-	ifr.ifr_addr.sa_family = AF_INET;
-	strcpy (ifr.ifr_name, p_dev);
-
-	/* Get IP address of interface */
-	if (ioctl (sock, SIOCGIFADDR, &ifr) < 0)
+	strncpy(ifr.ifr_name, pDev->name, sizeof(ifr.ifr_name));
+	ifr.ifr_name[sizeof(ifr.ifr_name) - 1] = 0;
+	if (ioctl(sock, SIOCGIFHWADDR, &ifr) == -1)
 	{
-		/* Do not log error for interfaces without IP address */
-		if (errno == EADDRNOTAVAIL)
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "ioctl");
+		goto clean_up;
+	}
+
+	if (ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER)
+	{
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "not ethernet interface");
+		goto clean_up;
+	}
+
+	const char *p_dev_mac = NULL;
+	if ((p_dev_mac = ether_ntoa((const struct ether_addr *)&ifr.ifr_hwaddr.sa_data[0])) == NULL)
+	{
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "Could not convert IP address of the device \"%s\"", pDev->name);
+		goto clean_up;
+	}
+
+	/* Put read values into devices structure */
+	if ((devices.dev = (IPWD_S_DEV *)realloc(devices.dev, (devices.devnum + 1) * sizeof(IPWD_S_DEV))) == NULL)
+	{
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "Unable to resize devices structure");
+		goto clean_up;
+	}
+	
+	strncpy(devices.dev[devices.devnum].mac, p_dev_mac, sizeof(devices.dev[devices.devnum].mac));
+	ifr.ifr_name[sizeof(devices.dev[devices.devnum].mac) - 1] = 0;
+
+	memset(devices.dev[devices.devnum].device, '\0', IPWD_MAX_DEVICE_NAME_LEN);
+	strncpy(devices.dev[devices.devnum].device, pDev->name, IPWD_MAX_DEVICE_NAME_LEN - 1);
+	devices.dev[devices.devnum].mode = mode;
+
+	/* Set time of last conflict */
+	devices.dev[devices.devnum].time.tv_sec = 0;
+	devices.dev[devices.devnum].time.tv_usec = 0;
+	devices.dev[devices.devnum].addresses = NULL;
+	for (const pcap_addr_t *pAddr = pDev->addresses; pAddr != NULL; pAddr = pAddr->next)
+	{
+		if (pAddr->addr->sa_family != AF_INET)
+			continue;
+
+		IPWD_S_ADDR *address = malloc(sizeof(IPWD_S_ADDR));
+		memset(address, 0, sizeof(IPWD_S_ADDR));
+
+		const char *strIP;
+		struct in_addr sin_addr = ((struct sockaddr_in *)pAddr->addr)->sin_addr;
+		if ((strIP = inet_ntoa(sin_addr)) == NULL)
 		{
-			close (sock);
-			return (IPWD_RV_ERROR);
+			ipwd_message(IPWD_MSG_TYPE_ERROR, "Could not convert IP address of the device \"%s\"", pDev->name);
+			continue;
 		}
 
-		ipwd_message (IPWD_MSG_TYPE_ERROR, "Could not retrieve IP address of the device \"%s\" : %s", p_dev, strerror(errno));
-		close (sock);
-		return (IPWD_RV_ERROR);
+		address->ip = strdup(strIP);
+		address->next = devices.dev[devices.devnum].addresses;
+		devices.dev[devices.devnum].addresses = address;
+
+		ipwd_message(IPWD_MSG_TYPE_DEBUG, "Found device %s - %s", devices.dev[devices.devnum].device, strIP);
 	}
+	pResult = &devices.dev[devices.devnum];
+	devices.devnum = devices.devnum + 1;
 
-	char *p_dev_ip = NULL;
+clean_up:
+	if (sock != -1)
+		close(sock);
 
-	/* Following variable was added because gcc 4.4.1 displayed warning: dereferencing pointer ‘({anonymous})’ does break strict-aliasing rules */
-	struct in_addr sin_addr = ((struct sockaddr_in *) &ifr.ifr_addr)->sin_addr;
-
-	if ((p_dev_ip = inet_ntoa (sin_addr)) == NULL)
+	if (h_pcap != NULL)
 	{
-		ipwd_message (IPWD_MSG_TYPE_ERROR, "Could not convert IP address of the device \"%s\"", p_dev);
-		close (sock);
-		return (IPWD_RV_ERROR);
+		pcap_close(h_pcap);
+		h_pcap = NULL;
 	}
 
-	memset (p_ip, '\0', IPWD_MAX_DEVICE_ADDRESS_LEN);
-	strncpy (p_ip, p_dev_ip, IPWD_MAX_DEVICE_ADDRESS_LEN - 1);
-
-	/* Get MAC address of interface */
-	if (ioctl (sock, SIOCGIFHWADDR, &ifr) < 0)
-	{
-		ipwd_message (IPWD_MSG_TYPE_ERROR, "Could not retrieve IP address of the device \"%s\"", p_dev);
-		close (sock);
-		return (IPWD_RV_ERROR);
-	}
-
-	char *p_dev_mac = NULL;
-
-	if ((p_dev_mac = ether_ntoa ((const struct ether_addr *) &ifr.ifr_hwaddr.sa_data[0])) == NULL)
-	{
-		ipwd_message (IPWD_MSG_TYPE_ERROR, "Could not convert IP address of the device \"%s\"", p_dev);
-		close (sock);
-		return (IPWD_RV_ERROR);
-	}
-
-	memset (p_mac, '\0', IPWD_MAX_DEVICE_ADDRESS_LEN);
-	strncpy (p_mac, p_dev_mac, IPWD_MAX_DEVICE_ADDRESS_LEN - 1);
-
-	/* Close socket */
-	close (sock);
-
-	ipwd_message (IPWD_MSG_TYPE_DEBUG, "Device info: %s %s-%s", p_dev, p_ip, p_mac);
-
-	return (IPWD_RV_SUCCESS);
-
+	return pResult;
 }
 
 
@@ -119,120 +149,37 @@ int ipwd_devinfo (const char *p_dev, char *p_ip, char *p_mac)
  * See netdevice(7) manual page for more information.
  * \return IPWD_RV_SUCCESS if successful IPWD_RV_ERROR otherwise
  */
-int ipwd_fill_devices (void)
+int ipwd_fill_devices()
 {
-
-	int sock = -1;
-
-	char ifaces_buf[10240];
-	struct ifconf ifc;
-	struct ifreq * ifr = NULL;
-	struct ifreq * iface = NULL;
-
-	int ifaces_num = 0;
-	int i = 0;
-
-	pcap_t *h_pcap = NULL;
-	char errbuf[PCAP_ERRBUF_SIZE];
-
-	memset (ifaces_buf, 0, sizeof (ifaces_buf));
-	memset (&ifc, 0, sizeof (ifc));
-	memset (errbuf, 0, PCAP_ERRBUF_SIZE);
+	int res = IPWD_RV_ERROR;	
+	char errbuf[PCAP_ERRBUF_SIZE] = {0};
+	pcap_if_t *pAllDevs = NULL;
 
 	/* Verify that devices structure is empty and configuration mode is automatic */
-	if ((devices.dev != NULL) || (devices.devnum != 0) || (config.mode != IPWD_CONFIGURATION_MODE_AUTOMATIC))
+	if ((devices.dev != NULL) || (devices.devnum != 0))
 	{
-		ipwd_message (IPWD_MSG_TYPE_ERROR, "Cannot proceed with automatic configuration. Please check that configuration file does not contain iface variables");
-		return (IPWD_RV_ERROR);
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "Cannot proceed with automatic configuration. Please check that configuration file does not contain iface variables");
+		return IPWD_RV_ERROR;
 	}
 
-	/* Create UDP socket */
-	sock = socket (AF_INET, SOCK_DGRAM, 0);
-	if (sock < 0)
+	if (pcap_findalldevs(&pAllDevs, errbuf))
+		goto clean_up;
+
+	for (const pcap_if_t *pDev = pAllDevs; pDev != NULL; pDev = pDev->next)
 	{
-		ipwd_message (IPWD_MSG_TYPE_ERROR, "Could not open socket");
-		return (IPWD_RV_ERROR);
-	}
-
-	/* Set buffer */
-	ifc.ifc_len = sizeof (ifaces_buf);
-	ifc.ifc_buf = ifaces_buf;
-
-	/* Get list of interfaces */
-	if (ioctl (sock, SIOCGIFCONF, &ifc) < 0)
-	{
-		ipwd_message (IPWD_MSG_TYPE_ERROR, "Could not retrieve list of network interfaces");
-		close (sock);
-		return (IPWD_RV_ERROR);
-	}
-
-	/* Determine number of interfaces */
-	ifaces_num = ifc.ifc_len / sizeof (struct ifreq);
-
-	/* Get pointer to array with interfaces */
-	ifr = ifc.ifc_req;
-
-	/* Loop through array with interfaces */
-	for (i = 0; i < ifaces_num; i++)
-	{
-		iface = &ifr[i];
-
-		/* Skip loopback devices */
-		if (ioctl(sock, SIOCGIFFLAGS, iface) < 0)
+		if (pDev->flags & PCAP_IF_LOOPBACK)
 		{
-			ipwd_message (IPWD_MSG_TYPE_ERROR, "Could not get interface flags for device \"%s\"", iface->ifr_name);
+			ipwd_message(IPWD_MSG_TYPE_DEBUG, "Skipping loopback device \"%s\"", pDev->name);
 			continue;
 		}
 
-		if (iface->ifr_ifru.ifru_flags & IFF_LOOPBACK)
-		{
-			ipwd_message (IPWD_MSG_TYPE_DEBUG, "Skipping loopback device \"%s\"", iface->ifr_name);
-			continue;
-		}
-
-		/* Check if device is valid ethernet device */
-		h_pcap = pcap_open_live (iface->ifr_name, BUFSIZ, 0, 0, errbuf);
-		if (h_pcap == NULL)
-		{
-			ipwd_message (IPWD_MSG_TYPE_ERROR, "IPwatchD is unable to work with device \"%s\"", iface->ifr_name);
-			continue;
-		}
-
-		if (pcap_datalink (h_pcap) != DLT_EN10MB)
-		{
-			ipwd_message (IPWD_MSG_TYPE_ERROR, "Device \"%s\" is not valid ethernet device", iface->ifr_name);
-			pcap_close (h_pcap);
-			continue;
-		}
-
-		pcap_close (h_pcap);
-
-		/* Put read values into devices structure */
-		if ((devices.dev = (IPWD_S_DEV *) realloc (devices.dev, (devices.devnum + 1) * sizeof (IPWD_S_DEV))) == NULL)
-		{
-			ipwd_message (IPWD_MSG_TYPE_ERROR, "Unable to resize devices structure");
-			close (sock);
-			return (IPWD_RV_ERROR);
-		}
-
-		memset (devices.dev[devices.devnum].device, '\0', IPWD_MAX_DEVICE_NAME_LEN);
-		strncpy (devices.dev[devices.devnum].device, iface->ifr_name, IPWD_MAX_DEVICE_NAME_LEN - 1);
-		devices.dev[devices.devnum].mode = IPWD_PROTECTION_MODE_PASSIVE;
-
-		/* Set time of last conflict */
-		devices.dev[devices.devnum].time.tv_sec = 0;
-		devices.dev[devices.devnum].time.tv_usec = 0;
-
-		ipwd_message (IPWD_MSG_TYPE_DEBUG, "Found device %s", devices.dev[devices.devnum].device);
-
-		devices.devnum = devices.devnum + 1;
-
+		ipwd_fill_device(pDev, IPWD_PROTECTION_MODE_PASSIVE);
 	}
+	res = IPWD_RV_SUCCESS;
 
-	/* Close socket */
-	close (sock);
+clean_up:
+	if (pAllDevs != NULL)
+		pcap_freealldevs(pAllDevs);
 
-	return (IPWD_RV_SUCCESS);
-
+	return res;
 }
-

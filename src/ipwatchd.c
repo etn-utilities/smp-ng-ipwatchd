@@ -33,7 +33,7 @@ int syslog_flag = 0;
 int testing_flag = 0;
 
 // ! Flag indicating run with daemon mode or foreground mode.
-int daemon_flag = 1;
+int daemon_flag = 0;
 
 //! Structure that holds information about network interfaces
 IPWD_S_DEVS devices;
@@ -72,10 +72,11 @@ int main (int argc, char *argv[])
 			{ "help", no_argument, 0, 'h' },
 			{ "version", no_argument, 0, 'v' },
 			{ "nodaemon", no_argument, 0, 'n' },
+			{ "fork", no_argument, 0, 'f' },
 			{ 0, 0, 0, 0 }
 		};
 
-		c = getopt_long (argc, argv, "c:dthvn", long_options, &option_index);
+		c = getopt_long (argc, argv, "c:dthvnf", long_options, &option_index);
 
 		if (c == -1)
 		{
@@ -91,13 +92,14 @@ int main (int argc, char *argv[])
 					return (IPWD_RV_ERROR);
 				}
 
-				if ((config_file = (char *) malloc ((strlen (optarg) + 1) * sizeof (char))) == NULL)
+				if (config_file)
+					free(config_file);
+					
+				if ((config_file = strdup(optarg)) == NULL)
 				{
 					ipwd_message (IPWD_MSG_TYPE_ERROR, "Unable to open configuration file %s - malloc failed", optarg);
 					return (IPWD_RV_ERROR);
 				}
-
-				strcpy (config_file, optarg);
 				break;
 
 			case 'd':
@@ -110,6 +112,10 @@ int main (int argc, char *argv[])
 
 			case 'n':
 				daemon_flag = 0;
+				break;
+
+			case 'f':
+				daemon_flag = 1;
 				break;
 
 			case 'h':
@@ -141,9 +147,10 @@ int main (int argc, char *argv[])
 	/* Path to configuration file must be specified */
 	if (config_file == NULL)
 	{
-		ipwd_message (IPWD_MSG_TYPE_ERROR, "You must specify path to configuration file.");
-		ipwd_message (IPWD_MSG_TYPE_ERROR, "Try %s --help", argv[0]);
-		return (IPWD_RV_ERROR);
+		//ipwd_message (IPWD_MSG_TYPE_ERROR, "You must specify path to configuration file.");
+		//ipwd_message (IPWD_MSG_TYPE_ERROR, "Try %s --help", argv[0]);
+		//return (IPWD_RV_ERROR);
+		config_file = strdup("/etc/ipwatchd.conf");
 	}
 
 	/* Only root can run IPwatchD */
@@ -282,4 +289,3 @@ void ipwd_print_help (void)
 	fprintf (stdout, "\n");
 	fprintf (stdout, "Please send any bug reports to jariq@jariq.sk\n");
 }
-
