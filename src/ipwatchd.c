@@ -240,6 +240,19 @@ int main (int argc, char *argv[])
 
 	pcap_freecode (&fp);
 
+	for (int i = 0; i < devices.devnum; i++)
+	{
+		if (devices.dev[i].mode == IPWD_PROTECTION_MODE_IGNORE)
+			continue;
+
+		for (const IPWD_S_ADDR *pAddr = devices.dev[i].addresses; pAddr != NULL; pAddr = pAddr->next)
+		{
+			/* Send GARP request to update cache of our neighbours */
+			ipwd_message (IPWD_MSG_TYPE_ALERT, "Sending Gratuitous ARP for %s %s %s", devices.dev[i].device, devices.dev[i].mac, pAddr->ip);
+			ipwd_genarp (devices.dev[i].device, pAddr->ip, devices.dev[i].mac, pAddr->ip, "ff:ff:ff:ff:ff:ff", ARPOP_REQUEST);
+		}
+	}
+
 	ipwd_message (IPWD_MSG_TYPE_DEBUG, "Entering pcap loop");
 
 	/* Loop until SIGTERM calls pcap_breakloop */
