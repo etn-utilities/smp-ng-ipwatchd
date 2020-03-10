@@ -143,7 +143,7 @@ void ipwd_analyse (u_char * args, const struct pcap_pkthdr *header, const u_char
 		/* Check if current time is within the defend interval */
 		if (difference < config.defend_interval)
 		{
-			ipwd_message (IPWD_MSG_TYPE_ALERT, "MAC address %s causes IP conflict with address %s set on interface %s - no action taken because this happened within the defend interval", rcv_smac, ip, devices.dev[i].device);
+			ipwd_message (IPWD_MSG_TYPE_DEBUG, "MAC address %s causes IP conflict with address %s set on interface %s - no action taken because this happened within the defend interval", rcv_smac, ip, devices.dev[i].device);
 			break;
 		}
 
@@ -154,7 +154,7 @@ void ipwd_analyse (u_char * args, const struct pcap_pkthdr *header, const u_char
 		/* Handle IP conflict */
 		if (devices.dev[i].mode == IPWD_PROTECTION_MODE_ACTIVE)
 		{
-			ipwd_message (IPWD_MSG_TYPE_ALERT, "MAC address %s causes IP conflict with address %s set on interface %s - active mode - reply sent", rcv_smac, rcv_sip, devices.dev[i].device);
+			ipwd_message (IPWD_MSG_TYPE_ALERT, "MAC address %s causes IP conflict with address %s set on interface %s - reply sent", rcv_smac, rcv_sip, devices.dev[i].device);
 
 			/* Send reply to conflicting system */
 			ipwd_genarp (devices.dev[i].device, rcv_sip, devices.dev[i].mac, rcv_sip, rcv_smac, ARPOP_REPLY);
@@ -164,7 +164,7 @@ void ipwd_analyse (u_char * args, const struct pcap_pkthdr *header, const u_char
 		}
 		else
 		{
-			ipwd_message (IPWD_MSG_TYPE_ALERT, "MAC address %s causes IP conflict with address %s set on interface %s - passive mode - reply not sent", rcv_smac, rcv_sip, devices.dev[i].device);
+			ipwd_message (IPWD_MSG_TYPE_ALERT, "MAC address %s causes IP conflict with address %s set on interface %s - reply not sent", rcv_smac, rcv_sip, devices.dev[i].device);
 		}
 
 		if (config.script != NULL)
