@@ -20,6 +20,8 @@
  * \brief Contains logic used for acquiring information about network devices
  */
 
+#include <errno.h>
+
 #include "ipwatchd.h"
 
 extern IPWD_S_CONFIG config;
@@ -44,13 +46,13 @@ const IPWD_S_DEV* ipwd_fill_device(const pcap_if_t *pDev, IPWD_PROTECTION_MODE m
 	h_pcap = pcap_open_live(pDev->name, BUFSIZ, 0, 0, errbuf);
 	if (h_pcap == NULL)
 	{
-		ipwd_message(IPWD_MSG_TYPE_ERROR, "IPwatchD is unable to work with device \"%s\"", pDev->name);
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "IPwatchD is unable to work with device \"%s\": %s", pDev->name, errbuf);
 		goto clean_up;
 	}
 
 	if (pcap_datalink(h_pcap) != DLT_EN10MB)
 	{
-		ipwd_message(IPWD_MSG_TYPE_ERROR, "Device \"%s\" is not valid ethernet device", pDev->name);
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "Device \"%s\" is not a valid ethernet device: %s", pDev->name, errbuf);
 		goto clean_up;
 	}
 	pcap_close(h_pcap);
@@ -61,7 +63,7 @@ const IPWD_S_DEV* ipwd_fill_device(const pcap_if_t *pDev, IPWD_PROTECTION_MODE m
 	sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (sock < 0)
 	{
-		ipwd_message(IPWD_MSG_TYPE_ERROR, "Could not open socket");
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "Could not open socket: %s", strerror(errno));
 		goto clean_up;
 	}
 
@@ -69,13 +71,13 @@ const IPWD_S_DEV* ipwd_fill_device(const pcap_if_t *pDev, IPWD_PROTECTION_MODE m
 	ifr.ifr_name[sizeof(ifr.ifr_name) - 1] = 0;
 	if (ioctl(sock, SIOCGIFHWADDR, &ifr) == -1)
 	{
-		ipwd_message(IPWD_MSG_TYPE_ERROR, "ioctl");
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "ioctl: %s", strerror(errno));
 		goto clean_up;
 	}
 
 	if (ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER)
 	{
-		ipwd_message(IPWD_MSG_TYPE_ERROR, "not ethernet interface");
+		ipwd_message(IPWD_MSG_TYPE_ERROR, "Device \"%s\" is not an ethernet interface", pDev->name);
 		goto clean_up;
 	}
 
@@ -93,8 +95,8 @@ const IPWD_S_DEV* ipwd_fill_device(const pcap_if_t *pDev, IPWD_PROTECTION_MODE m
 		goto clean_up;
 	}
 	
-	strncpy(devices.dev[devices.devnum].mac, p_dev_mac, sizeof(devices.dev[devices.devnum].mac));
-	ifr.ifr_name[sizeof(devices.dev[devices.devnum].mac) - 1] = 0;
+	strncpy(devices.dev[devices.devnum].mac, p_dev_mac, sizeof(devices.dev[devices.devnum].mac) - 1);
+	ifr.ifr_name[sizeof(ifr.ifr_name) - 1] = 0;
 
 	memset(devices.dev[devices.devnum].device, '\0', IPWD_MAX_DEVICE_NAME_LEN);
 	strncpy(devices.dev[devices.devnum].device, pDev->name, IPWD_MAX_DEVICE_NAME_LEN - 1);

@@ -88,7 +88,7 @@ int main (int argc, char *argv[])
 			case 'c':
 				if (ipwd_file_exists (optarg) == IPWD_RV_ERROR)
 				{
-					ipwd_message (IPWD_MSG_TYPE_ERROR, "Unable to open configuration file %s", optarg);
+					ipwd_message (IPWD_MSG_TYPE_ERROR, "Unable to open configuration file \"%s\"", optarg);
 					return (IPWD_RV_ERROR);
 				}
 
@@ -97,7 +97,7 @@ int main (int argc, char *argv[])
 					
 				if ((config_file = strdup(optarg)) == NULL)
 				{
-					ipwd_message (IPWD_MSG_TYPE_ERROR, "Unable to open configuration file %s - malloc failed", optarg);
+					ipwd_message (IPWD_MSG_TYPE_ERROR, "Unable to open configuration file \"%s\" - malloc failed", optarg);
 					return (IPWD_RV_ERROR);
 				}
 				break;
@@ -163,7 +163,7 @@ int main (int argc, char *argv[])
 	/* Read config file */
 	if (ipwd_read_config (config_file) == IPWD_RV_ERROR)
 	{
-		ipwd_message (IPWD_MSG_TYPE_ERROR, "Unable to read configuration file");
+		ipwd_message (IPWD_MSG_TYPE_ERROR, "Failure processing configuration file \"%s\"", config_file);
 		return (IPWD_RV_ERROR);
 	}
 

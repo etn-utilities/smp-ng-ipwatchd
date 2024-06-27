@@ -70,10 +70,8 @@ int ipwd_read_config (const char *filename)
 	char variable[100];
 	char value[400];
 
-	pcap_t *h_pcap = NULL;
 	char errbuf[PCAP_ERRBUF_SIZE];
 
-	int iface_len = 0;
 
 	// Initialize structures with default values
 	config.facility = LOG_DAEMON;
