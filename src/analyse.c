@@ -43,6 +43,9 @@ void ipwd_analyse (u_char * args, const struct pcap_pkthdr *header, const u_char
 	int command_len = 0;
 	int rv = 0;
 	int i = 0;
+	
+	(void)args;
+	(void)header;
 
 	/* Get addresses from packet */
 	IPWD_S_ARP_HEADER *arpaddr;
